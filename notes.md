@@ -15,7 +15,7 @@ Option A - online server:
 
 Set up server:
 
-```python
+```bash
 python -m minisgl --model "Qwen/Qwen2.5-1.5B-Instruct" --port 1920 
 ```
 
@@ -38,7 +38,7 @@ curl -X POST http://127.0.0.1:1920/v1/chat/completions \
 ```
 
 Option B - interactive chat mode (shell flag):
-```python
+```bash
 python -m minisgl --model "Qwen/Qwen2.5-1.5B-Instruct" --shell --port 1920
 ```
 
@@ -47,7 +47,7 @@ python -m minisgl --model "Qwen/Qwen2.5-1.5B-Instruct" --shell --port 1920
 Start server (see above.)
 
 Then run 
-```python
+```bash
 python benchmark/benchmark.py
 ```
 
@@ -57,7 +57,7 @@ This reports stats such as TTFT, TPOT, Latency and Throughput with std. You can 
 
 Run benchmark:
 
-```python
+```bash
 python benchmark/offline/bench.py 
 ```
 Sample output: Total: 133966tok, Time: 73.15s, Throughput: 1831.38tok/s
@@ -67,5 +67,4 @@ Sample output: Total: 133966tok, Time: 73.15s, Throughput: 1831.38tok/s
 - Tensor Parallelism: Scales inference across multiple GPUs.
 
 
-Overlap Scheduling
-- To further reduce CPU overhead, Mini-SGLang employs overlap scheduling, a technique proposed in NanoFlow. This approach overlaps the CPU scheduling overhead with GPU computation, improving overall system throughput.
+- Overlap Scheduling: To further reduce CPU overhead, Mini-SGLang employs overlap scheduling, a technique proposed in NanoFlow. This approach overlaps the CPU scheduling overhead with GPU computation, improving overall system throughput.
