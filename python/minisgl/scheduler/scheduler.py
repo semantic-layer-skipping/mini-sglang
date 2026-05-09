@@ -62,6 +62,7 @@ class Scheduler(SchedulerIOMixin):
         self.decode_manager = DecodeManager(
             config.page_size,
             num_blocks=self.engine.graph_runner.num_blocks,
+            max_graph_bs=self.engine.graph_runner.max_graph_bs
         )
         self.prefill_manager = PrefillManager(
             self.cache_manager, self.table_manager, self.decode_manager

@@ -209,7 +209,7 @@ class Engine:
 
         return min_free_memory, max_free_memory
 
-    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput:
+    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput | None:
         assert torch.cuda.current_stream() == self.stream
         
         # give the batch its GPU-native tensor for VRAM Ledger routing

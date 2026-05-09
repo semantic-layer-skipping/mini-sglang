@@ -12,6 +12,8 @@ class DecodeManager:
     page_size: int
     # blocks of model
     num_blocks: int
+    # maximum bach sizes supported by our cuda graphs
+    max_graph_bs: int
     # virtual pipeline queues
     virtual_queues: Dict[int, Set[Req]] = field(default_factory=dict)
 
@@ -54,9 +56,9 @@ class DecodeManager:
             if not reqs_in_queue:
                 continue
                 
-            # get requests waiting for this block
-            batch_reqs = list(reqs_in_queue)
-            
+            # get requests waiting for this block, up to the max batch size
+            batch_reqs = list(reqs_in_queue)[:self.max_graph_bs]
+
             # TODO: this is a simple router that skips with some probability
             if block_idx == 0:
                 # we never skip the first block
@@ -66,7 +68,8 @@ class DecodeManager:
                 is_project = random.random() < RANDOM_SKIP_PROB
                 
             # remove them from the queue, as they are now in-flight on the GPU
-            self.virtual_queues[block_idx].clear()
+            for req in batch_reqs:
+                self.virtual_queues[block_idx].remove(req)
             
             batch = Batch(reqs=batch_reqs, phase="decode")
             batch.block_idx = block_idx
