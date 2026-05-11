@@ -209,11 +209,12 @@ class Scheduler(SchedulerIOMixin):
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
         self.engine.graph_runner.pad_batch(batch)
         
-        # only allocate KV cache and setup metadata once per token (at Block 0), 
-        # or during the Prefill phase.
+        # only allocate KV cache once per token (at Block 0 or during the Prefill phase)
         if batch.is_prefill or getattr(batch, "block_idx", 0) == 0:
             self.cache_manager.allocate_paged(batch.reqs)
-            self.engine.attn_backend.prepare_metadata(batch)
+        
+        # prepare metadata unconditionally for every block, as decode manager creates new batches
+        self.engine.attn_backend.prepare_metadata(batch)
             
         batch.positions = _make_positions(batch, self.device)
         input_mapping = _make_input_tuple(batch, self.device)
