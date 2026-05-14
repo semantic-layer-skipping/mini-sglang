@@ -38,6 +38,7 @@ class DecodeManager:
         for batch in self.pending_batches:
             if req in batch.reqs:
                 batch.reqs.remove(req)
+                break
         # clean up empty batches
         self.pending_batches = [b for b in self.pending_batches if len(b.reqs) > 0]
 
