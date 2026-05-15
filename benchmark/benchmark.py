@@ -23,7 +23,7 @@ def compute_mean_and_ci_stats(data, confidence=0.95):
     ci = sem * stats.t.ppf(conf_bound, len(data) - 1)
     return mean, ci
 
-async def generate_and_measure(req_id: str, args: argparse.Namespace, is_warmup: bool = False):
+async def generate_and_measure(req_id: str, model: str, num_tokens: int, is_warmup: bool = False):
     prompt = f"Please write a highly detailed, extremely long essay about the history of artificial intelligence. Request ID: {req_id}"
     
     start_time = time.perf_counter()
@@ -32,9 +32,9 @@ async def generate_and_measure(req_id: str, args: argparse.Namespace, is_warmup:
     
     try:
         stream = await client.chat.completions.create(
-            model=args.model,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=args.num_tokens, # generate this many tokens, since we set ignore_eos=True
+            max_tokens=num_tokens, # generate this many tokens, since we set ignore_eos=True
             temperature=0.0,
             stream=True,
             extra_body={"ignore_eos": True}
@@ -52,7 +52,7 @@ async def generate_and_measure(req_id: str, args: argparse.Namespace, is_warmup:
             print(f"  Request {req_id} failed: No tokens received.")
             return None # request failed
 
-        expected_chunks = args.num_tokens + 1
+        expected_chunks = num_tokens + 1
         assert chunk_count >= expected_chunks - 1, f"Expected {expected_chunks-1} chunks but got {chunk_count} for Req {req_id}"
         
         token_count = chunk_count - 1  # last chunk is an end chunk (not actual token)
@@ -73,12 +73,12 @@ async def generate_and_measure(req_id: str, args: argparse.Namespace, is_warmup:
         print(f"  Request {req_id} failed: {e}")
         return None
 
-async def run_batch(run_id: str, args: argparse.Namespace, is_warmup: bool):
+async def run_batch(run_id: str, model: str, num_tokens: int, concurrency: int, is_warmup: bool):
     batch_start = time.perf_counter()
     
     tasks = [
-        generate_and_measure(f"{run_id}-{i}", args, is_warmup) 
-        for i in range(args.concurrency)
+        generate_and_measure(f"{run_id}-{i}", model, num_tokens, is_warmup) 
+        for i in range(concurrency)
     ]
     results = await asyncio.gather(*tasks)
     
@@ -92,7 +92,7 @@ async def run_batch(run_id: str, args: argparse.Namespace, is_warmup: bool):
 async def main(args: argparse.Namespace):
     print(f"Starting {args.num_warmups} Warmup run(s)...")
     for w in range(args.num_warmups):
-        await run_batch(f"warmup{w+1}", args, is_warmup=True)
+        await run_batch(f"warmup{w+1}", args.model, args.num_tokens, args.concurrency, is_warmup=True)
     print("Warmups complete.\n")
     
     all_ttfts = []
@@ -106,7 +106,7 @@ async def main(args: argparse.Namespace):
     print(f"Starting {args.num_runs} Benchmark run(s) with Concurrency={args.concurrency}...")
     for r in range(args.num_runs):
         print(f"--- Run {r+1}/{args.num_runs} ---")
-        results, batch_time = await run_batch(f"run{r+1}", args, is_warmup=False)
+        results, batch_time = await run_batch(f"run{r+1}", args.model, args.num_tokens, args.concurrency, is_warmup=False)
         
         total_batch_time += batch_time
         
