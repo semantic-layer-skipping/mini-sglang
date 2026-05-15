@@ -20,11 +20,19 @@ from .sample import BatchSamplingArgs, Sampler
 logger = init_logger(__name__)
 
 
+K = 5
+
+
 class ForwardOutput(NamedTuple):
     next_tokens_gpu: torch.Tensor
     next_tokens_cpu: torch.Tensor
     copy_done_event: torch.cuda.Event
 
+# intermediate block output (for non-full-compute), returning vector search results
+class IntermediateOutput(NamedTuple):
+    scores_cpu: torch.Tensor
+    ids_cpu: torch.Tensor
+    copy_done_event: torch.cuda.Event
 
 class Engine:
     def __init__(self, config: EngineConfig):
@@ -209,7 +217,7 @@ class Engine:
 
         return min_free_memory, max_free_memory
 
-    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput | None:
+    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput | IntermediateOutput | None:
         assert torch.cuda.current_stream() == self.stream
         
         # give the batch its GPU-native tensor for VRAM Ledger routing
@@ -227,10 +235,26 @@ class Engine:
                 # prefill phase, executing the full graph with dynamic shapes
                 logits = self.model.forward()
 
-        # if logits is None, it means we finished an intermediate block,
-        # since no token was generated yet, return control to the scheduler.
+        # handle intermediate blocks
         if logits is None:
-            return None
+            if not batch.is_project:
+                # this was a full-compute intermediate block. 
+                # generate dummy vector search results on the GPU
+                dummy_scores = torch.rand(batch.size, K, device=self.device, dtype=torch.float32)
+                dummy_ids = torch.randint(0, 1000, (batch.size, K), device=self.device, dtype=torch.int64)
+
+                # trigger the non-blocking transfer to CPU RAM
+                scores_cpu = dummy_scores.to("cpu", non_blocking=True)
+                ids_cpu = dummy_ids.to("cpu", non_blocking=True)
+
+                # record the event so the scheduler knows when the copy is done
+                copy_done_event = torch.cuda.Event()
+                copy_done_event.record(self.stream)
+
+                return IntermediateOutput(scores_cpu, ids_cpu, copy_done_event)
+            else:
+                # this was a project-only block. don't serach and return none immediately
+                return None
 
         # if we have logits, the final block finished, so we generate the token and complete the req
         for req in batch.reqs:

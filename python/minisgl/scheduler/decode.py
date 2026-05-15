@@ -53,25 +53,59 @@ class DecodeManager:
         
         # deepest ready first scheduling
         for block_idx in reversed(range(self.num_blocks)):
-            reqs_in_queue = self.virtual_queues[block_idx]
+            reqs_in_queue = list(self.virtual_queues[block_idx])
             if not reqs_in_queue:
                 continue
-                
-            # get requests waiting for this block, up to the max batch size
-            batch_reqs = list(reqs_in_queue)[:self.max_graph_bs]
-
-            # TODO: this is a simple router that skips with some probability
-            if block_idx == 0:
-                # we never skip the first block
-                is_project = False
-            else:
-                is_project = random.random() < SKIP_PROB
-                
-            # remove them from the queue, as they are now in-flight on the GPU
-            for req in batch_reqs:
-                self.virtual_queues[block_idx].remove(req)
             
-            batch = Batch(reqs=batch_reqs, phase="decode")
+            batch_reqs = reqs_in_queue[:self.max_graph_bs]
+
+            if block_idx == 0:
+                # block 0 is always a full compute to extract the initial features
+                is_project = False
+                selected_reqs = batch_reqs
+            else:
+                compute_reqs = []
+                project_reqs = []
+
+                # routing based on vector search scores for this block (if available)
+                for req in batch_reqs:
+                    # if we are in the middle of a current skip, continue skipping
+                    if req.skip_blocks_remaining > 0:
+                        req.skip_blocks_remaining -= 1
+                        project_reqs.append(req)
+                        
+                    # if we are not skipping, evaluate the latest vector search scores
+                    elif req.last_search_scores is not None:
+                        
+                        # TODO: replace this logic with something more principled, use stored metadata from ids and scores to decide how many blocks to skip
+                        mean_score = req.last_search_scores.mean().item()
+                        if mean_score*0.0000001 + random.random() < SKIP_PROB:
+                            num_remaining_blocks = self.num_blocks - 1 - block_idx
+                            num_blocks_to_skip = random.randint(1, num_remaining_blocks)
+                            # we will skip next block
+                            project_reqs.append(req)
+                            # decide how many extra blocks to skip after this current one
+                            req.skip_blocks_remaining = num_blocks_to_skip - 1
+                        else:
+                            # otherwise decide to compute next block as normal
+                            compute_reqs.append(req)   
+                    else:
+                        assert False, "This should not happen! All reqs should have scores by now."
+
+                if project_reqs:
+                    is_project = True
+                    selected_reqs = project_reqs
+                else:
+                    is_project = False
+                    selected_reqs = compute_reqs
+                
+            # remove items in selected batch from the queues 
+            for req in selected_reqs:
+                self.virtual_queues[block_idx].remove(req)
+
+            #print(f"Scheduling batch at block {block_idx} with {len(selected_reqs)} reqs. Project={is_project}")
+            
+            batch = Batch(reqs=selected_reqs, phase="decode")
             batch.block_idx = block_idx
             batch.is_project = is_project
             return batch
