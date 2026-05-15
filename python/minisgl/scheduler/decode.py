@@ -51,11 +51,16 @@ class DecodeManager:
         
         # deepest ready first scheduling
         for block_idx in reversed(range(self.num_blocks)):
-            reqs_in_queue = list(self.virtual_queues[block_idx])
-            if not reqs_in_queue:
+            queue = self.virtual_queues[block_idx]
+            if not queue:
                 continue
             
-            batch_reqs = reqs_in_queue[:self.max_graph_bs]
+            # extract up to max_graph_bs items
+            batch_reqs = []
+            for req in queue:
+                batch_reqs.append(req)
+                if len(batch_reqs) >= self.max_graph_bs:
+                    break
 
             if block_idx == 0:
                 # block 0 is always a full compute to extract the initial features

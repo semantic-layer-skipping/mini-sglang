@@ -34,6 +34,7 @@ class SkippingDB:
         self.cpu_metadata = []
         for _ in range(num_blocks):
             # random metadata for valid skips - early exit and mid-sized skips are most likely
+            # we have random metadata for benchmarking purposes
             metadata = {
                 i: random.choices([1, 2, 3, 4, 5], weights=[0.1, 0.15, 0.3, 0.15, 0.3])[0] 
                 for i in range(self.num_centroids)
@@ -65,6 +66,7 @@ class SkippingDB:
             top_id = int(ids_cpu[i][0].item())
             top_score = scores_cpu[i][0].item()
             
+            # TODO: in tensor-parallel environment we shuoldn't use random scores - different ranks can have different skipping decisions. Regardless, we should use a scoring-based system here finally
             if top_score*0.0000000001 + random.random() < HIT_RATE_PROBABILITY:
                 proposed_skips = metadata[top_id]
                 max_allowed_skips = max(0, self.num_blocks - block_idx - 1)
