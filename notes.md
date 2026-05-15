@@ -3,11 +3,34 @@
 This README includes notes about mini-sglang and our fork on it.
 
 ## Setup
-Activate environment.
-Set up environment:
+
+1. Create and activate environment.
+```bash
+uv venv --python=3.12
+source .venv/bin/activate
+
+2. Set up environment:
 ```python
 uv pip install -e .
 ```
+
+## Running Benchmark with Online Server
+
+1. Set up a server:
+```bash
+python -m minisgl --model "Qwen/Qwen2.5-1.5B-Instruct" --port 1920 
+```
+
+2. Then run benchmark script:
+```bash
+python benchmark/benchmark.py
+```
+
+This outputs stats such as TTFT, TPOT, Latency and Throughput with mean and confidence intervals. 
+The default setting acts as a simple test, with benchmark settings further controllable in the constants in `benchmark/benchmark.py`.
+This includes MAX_TOKENS (numbero of tokens to generate), CONCURRENCY (number of requests to send, i.e., batch size), NUM_WARMUPS and NUM_RUNS.
+
+If benchmarking the virtual pipelining implementation, the `SKIP_PROB` constant in `python/minisgl/scheduler/decode.py` file can be changed to view behaviour under different skipping probabilities.
 
 ## Online Serving
 
@@ -52,6 +75,17 @@ python benchmark/benchmark.py
 ```
 
 This reports stats such as TTFT, TPOT, Latency and Throughput with std. You can control the number of warmup and actual runs, as well as batch size and maximum number of tokens to generate pre-request.
+
+Sample output:
+==================================================
+BENCHMARK RESULTS (Runs=3, Concurrency=1, MaxTokens=256)
+==================================================
+TTFT (Prefill) : 25.30 ms ± 2.39 ms
+TPOT (Decode)  : 13.03 ms ± 0.01 ms
+Latency (E2E)  : 3335.20 ms ± 3.69 ms
+Throughput/Req : 76.46 tk/s ± 0.08 tk/s
+Sys Throughput : 76.45 tokens/sec
+==================================================
 
 ## Offline benchmark
 
