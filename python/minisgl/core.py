@@ -37,6 +37,9 @@ class Req:
 
     # virtual pipeline fields
     current_block: int = 0
+    
+    # counts number of blocks to skip/project-only
+    skip_blocks_remaining: int = 0
 
     def __post_init__(self) -> None:
         assert self.input_ids.is_cpu

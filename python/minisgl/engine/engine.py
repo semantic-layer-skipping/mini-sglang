@@ -12,6 +12,7 @@ from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import div_even, init_logger, is_sm90_supported, is_sm100_supported, torch_dtype
+from minisgl.engine.skipping_db import SkippingDB
 
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
@@ -25,6 +26,11 @@ class ForwardOutput(NamedTuple):
     next_tokens_cpu: torch.Tensor
     copy_done_event: torch.cuda.Event
 
+# intermediate block output (for non-full-compute), returning vector search results
+class IntermediateOutput(NamedTuple):
+    scores_cpu: torch.Tensor
+    ids_cpu: torch.Tensor
+    copy_done_event: torch.cuda.Event
 
 class Engine:
     def __init__(self, config: EngineConfig):
@@ -130,6 +136,16 @@ class Engine:
             dummy_req=self.dummy_req,
         )
 
+        # ======================= SkippingDB initialization ========================
+        logger.info_rank0("Initialising GPU SkippingDB...")
+        self.skipping_db = SkippingDB(
+            num_blocks=self.graph_runner.num_blocks,
+            hidden_size=config.model_config.hidden_size,
+            device=self.device,
+            dtype=self.dtype,
+            k=5
+        )
+
     def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
         if config.tp_info.size == 1 or config.use_pynccl:
             torch.distributed.init_process_group(
@@ -209,7 +225,7 @@ class Engine:
 
         return min_free_memory, max_free_memory
 
-    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput | None:
+    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput | IntermediateOutput | None:
         assert torch.cuda.current_stream() == self.stream
         
         # give the batch its GPU-native tensor for VRAM Ledger routing
@@ -227,10 +243,26 @@ class Engine:
                 # prefill phase, executing the full graph with dynamic shapes
                 logits = self.model.forward()
 
-        # if logits is None, it means we finished an intermediate block,
-        # since no token was generated yet, return control to the scheduler.
+        # handle intermediate blocks
         if logits is None:
-            return None
+            if not batch.is_project:
+                # this was a full-compute intermediate block. 
+                # generate dummy vector search results on the GPU
+                hidden_states = self.global_hidden_states[batch.table_indices]
+                scores_gpu, ids_gpu = self.skipping_db.search_gpu(batch.block_idx, hidden_states)
+
+                # trigger the non-blocking transfer to CPU RAM
+                scores_cpu = scores_gpu.to("cpu", non_blocking=True)
+                ids_cpu = ids_gpu.to("cpu", non_blocking=True)
+
+                # record the event so the scheduler knows when the copy is done
+                copy_done_event = torch.cuda.Event()
+                copy_done_event.record(self.stream)
+
+                return IntermediateOutput(scores_cpu, ids_cpu, copy_done_event)
+            else:
+                # this was a project-only block. don't serach and return none immediately
+                return None
 
         # if we have logits, the final block finished, so we generate the token and complete the req
         for req in batch.reqs:

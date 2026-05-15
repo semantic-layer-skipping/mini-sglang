@@ -23,8 +23,9 @@ from .prefill import ChunkedReq, PrefillManager
 from .table import TableManager
 
 if TYPE_CHECKING:
-    from minisgl.engine import BatchSamplingArgs, ForwardOutput
+    from minisgl.engine import BatchSamplingArgs
 
+from minisgl.engine import ForwardOutput, IntermediateOutput
 
 logger = init_logger(__name__)
 
@@ -39,7 +40,7 @@ class ForwardInput(NamedTuple):
     write_tuple: Indice2D  # (req_mapping, seq_lens or 0)
 
 
-ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
+ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput | IntermediateOutput | None]"
 
 
 class Scheduler(SchedulerIOMixin):
@@ -139,12 +140,36 @@ class Scheduler(SchedulerIOMixin):
         self.sync_all_ranks()
         self.engine.shutdown()
 
+
+    # TODO: maybe rename as receiver or something - it processes not just last data
     def _process_last_data(self, last_data: ForwardData | None) -> None:
         if last_data is None or last_data[1] is None:
-            # if last_data[1] is None, it means the batch is an intermediate block, so we don't have token to process yet
+            # if last_data[1] is None, it means the batch is an intermediate project-only block, so we don't have token/vector ids to process yet
             return
 
-        batch, (_, next_tokens_cpu, copy_done) = last_data[0].batch, last_data[1]
+        batch, output = last_data[0].batch, last_data[1]
+        if isinstance(output, IntermediateOutput):
+            # we need to handle async vector search data that has arrived
+            scores_cpu, ids_cpu, copy_done = output.scores_cpu, output.ids_cpu, output.copy_done_event
+            
+            # the CPU halts here to wait for the background copy to finish (while GPU is unblocked/working on other data)
+            copy_done.synchronize() 
+            skip_decisions = self.engine.skipping_db.get_decision_cpu(batch.block_idx, ids_cpu, scores_cpu)
+            
+            for i, req in enumerate(batch.reqs):
+                # attach the data to the request object
+                req.skip_blocks_remaining = skip_decisions[i]
+                
+                # advance the block counter now that the data is ready
+                req.current_block += 1
+                
+            # push the request into the next virtual queue
+            self.decode_manager.filter_reqs(batch.reqs)
+            return
+
+        # process the final block's output (ForwardOutput)
+        next_tokens_cpu = output.next_tokens_cpu
+        copy_done = output.copy_done_event
         copy_done.synchronize()
         reply: List[DetokenizeMsg] = []
         new_finished_reqs: Set[Req] = set()
@@ -236,25 +261,30 @@ class Scheduler(SchedulerIOMixin):
         return self._prepare_batch(batch) if batch else None
 
     
-    def _forward(self, forward_input: ForwardInput) -> ForwardOutput | None:
+    def _forward(self, forward_input: ForwardInput) -> ForwardOutput | IntermediateOutput | None:
         batch, sample_args, input_mapping, output_mapping = forward_input
         batch.input_ids = self.token_pool[input_mapping]
         forward_output = self.engine.forward_batch(batch, sample_args)
         
-        # if forward_output is None, then this is an intermediate block
-        if forward_output is None:
-            # intermediate block finished, advance to next block.
+        # route the outputs based on block type
+        if isinstance(forward_output, ForwardOutput):
+            # final block finished, save the token and push to block 0
+            self.token_pool[output_mapping] = forward_output.next_tokens_gpu
+            for req in batch.reqs:
+                req.current_block = 0
+                req.skip_blocks_remaining = 0 # ensure the skip decision is reset for execution of next token
+            self.decode_manager.filter_reqs(batch.reqs)
+            
+        elif forward_output is None:
+            # project-only block finished (no scores/ids to wait for)
+            # advance block immediately and push to next queue.
             for req in batch.reqs:
                 req.current_block += 1
-            self.decode_manager.filter_reqs(batch.reqs) # pushes into next queue
-            return None
-            
-        # final block finished, save the token
-        self.token_pool[output_mapping] = forward_output.next_tokens_gpu
-        for req in batch.reqs:
-            req.current_block = 0 # reset block counter for the next token
-            
-        self.decode_manager.filter_reqs(batch.reqs)
+            self.decode_manager.filter_reqs(batch.reqs)
+        
+        # Note: if forward_output is IntermediateOutput, it means it's an async vector search block, 
+        # we will handle the data in the next tick of _process_last_data when it arrives, so we return it directly here without pushing to a virtual queue
+                
         return forward_output
 
 

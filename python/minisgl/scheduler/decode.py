@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from typing import Iterable, Set, Dict
 
 from minisgl.core import Batch, Req
 
-SKIP_PROB = 0.3
 
 @dataclass
 class DecodeManager:
@@ -53,25 +51,47 @@ class DecodeManager:
         
         # deepest ready first scheduling
         for block_idx in reversed(range(self.num_blocks)):
-            reqs_in_queue = self.virtual_queues[block_idx]
-            if not reqs_in_queue:
+            queue = self.virtual_queues[block_idx]
+            if not queue:
                 continue
-                
-            # get requests waiting for this block, up to the max batch size
-            batch_reqs = list(reqs_in_queue)[:self.max_graph_bs]
-
-            # TODO: this is a simple router that skips with some probability
-            if block_idx == 0:
-                # we never skip the first block
-                is_project = False
-            else:
-                is_project = random.random() < SKIP_PROB
-                
-            # remove them from the queue, as they are now in-flight on the GPU
-            for req in batch_reqs:
-                self.virtual_queues[block_idx].remove(req)
             
-            batch = Batch(reqs=batch_reqs, phase="decode")
+            # extract up to max_graph_bs items
+            batch_reqs = []
+            for req in queue:
+                batch_reqs.append(req)
+                if len(batch_reqs) >= self.max_graph_bs:
+                    break
+
+            if block_idx == 0:
+                # block 0 is always a full compute to extract the initial features
+                is_project = False
+                selected_reqs = batch_reqs
+            else:
+                compute_reqs = []
+                project_reqs = []
+
+                # routing based on vector search scores for this block (if available)
+                for req in batch_reqs:
+                    if req.skip_blocks_remaining > 0:
+                        req.skip_blocks_remaining -= 1
+                        project_reqs.append(req)
+                    else:
+                        compute_reqs.append(req)
+
+                if project_reqs:
+                    is_project = True
+                    selected_reqs = project_reqs
+                else:
+                    is_project = False
+                    selected_reqs = compute_reqs
+                
+            # remove items in selected batch from the queues 
+            for req in selected_reqs:
+                self.virtual_queues[block_idx].remove(req)
+
+            #print(f"Scheduling batch at block {block_idx} with {len(selected_reqs)} reqs. Project={is_project}")
+            
+            batch = Batch(reqs=selected_reqs, phase="decode")
             batch.block_idx = block_idx
             batch.is_project = is_project
             return batch
