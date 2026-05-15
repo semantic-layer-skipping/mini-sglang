@@ -196,10 +196,9 @@ class GraphRunner:
         
         assert self.can_use_cuda_graph(batch)
 
-        # if we are running the first block, we need to prepare the batch and attention metadata
-        if block_idx == 0:
-            self.buffer.copy_from(batch)
-            self.attn_backend.prepare_for_replay(batch)
+        # load the dynamic batch data into the static buffer
+        self.buffer.copy_from(batch)
+        self.attn_backend.prepare_for_replay(batch)
         
         g = self.graph_map[batch.padded_size][block_idx][g_type]
         g.replay()

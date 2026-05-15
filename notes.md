@@ -78,6 +78,7 @@ python benchmark/benchmark.py
 
 This reports stats such as TTFT, TPOT, Latency and Throughput with std. You can control the number of warmup and actual runs, as well as batch size and maximum number of tokens to generate pre-request.
 
+
 Sample output:
 BENCHMARK RESULTS (Runs=3, Concurrency=1, MaxTokens=256)
 TTFT (Prefill) : 25.30 ms ± 2.39 ms
@@ -85,6 +86,7 @@ TPOT (Decode)  : 13.03 ms ± 0.01 ms
 Latency (E2E)  : 3335.20 ms ± 3.69 ms
 Throughput/Req : 76.46 tk/s ± 0.08 tk/s
 Sys Throughput : 76.45 tokens/sec
+
 
 
 ## Offline benchmark
