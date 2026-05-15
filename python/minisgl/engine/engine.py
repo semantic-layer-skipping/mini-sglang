@@ -12,15 +12,13 @@ from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import div_even, init_logger, is_sm90_supported, is_sm100_supported, torch_dtype
+from minisgl.engine.skipping_db import SkippingDB
 
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
 from .sample import BatchSamplingArgs, Sampler
 
 logger = init_logger(__name__)
-
-
-K = 5
 
 
 class ForwardOutput(NamedTuple):
@@ -138,6 +136,16 @@ class Engine:
             dummy_req=self.dummy_req,
         )
 
+        # ======================= SkippingDB initialization ========================
+        logger.info_rank0("Initialising GPU SkippingDB...")
+        self.skipping_db = SkippingDB(
+            num_blocks=self.graph_runner.num_blocks,
+            hidden_size=config.model_config.hidden_size,
+            device=self.device,
+            dtype=self.dtype,
+            k=5
+        )
+
     def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
         if config.tp_info.size == 1 or config.use_pynccl:
             torch.distributed.init_process_group(
@@ -240,12 +248,12 @@ class Engine:
             if not batch.is_project:
                 # this was a full-compute intermediate block. 
                 # generate dummy vector search results on the GPU
-                dummy_scores = torch.rand(batch.size, K, device=self.device, dtype=torch.float32)
-                dummy_ids = torch.randint(0, 1000, (batch.size, K), device=self.device, dtype=torch.int64)
+                hidden_states = self.global_hidden_states[batch.table_indices]
+                scores_gpu, ids_gpu = self.skipping_db.search_gpu(batch.block_idx, hidden_states)
 
                 # trigger the non-blocking transfer to CPU RAM
-                scores_cpu = dummy_scores.to("cpu", non_blocking=True)
-                ids_cpu = dummy_ids.to("cpu", non_blocking=True)
+                scores_cpu = scores_gpu.to("cpu", non_blocking=True)
+                ids_cpu = ids_gpu.to("cpu", non_blocking=True)
 
                 # record the event so the scheduler knows when the copy is done
                 copy_done_event = torch.cuda.Event()

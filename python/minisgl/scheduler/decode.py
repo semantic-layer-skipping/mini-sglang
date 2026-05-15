@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from typing import Iterable, Set, Dict
 
 from minisgl.core import Batch, Req
 
-SKIP_PROB = 0.3
 
 @dataclass
 class DecodeManager:
@@ -69,28 +67,11 @@ class DecodeManager:
 
                 # routing based on vector search scores for this block (if available)
                 for req in batch_reqs:
-                    # if we are in the middle of a current skip, continue skipping
                     if req.skip_blocks_remaining > 0:
                         req.skip_blocks_remaining -= 1
                         project_reqs.append(req)
-                        
-                    # if we are not skipping, evaluate the latest vector search scores
-                    elif req.last_search_scores is not None:
-                        
-                        # TODO: replace this logic with something more principled, use stored metadata from ids and scores to decide how many blocks to skip
-                        mean_score = req.last_search_scores.mean().item()
-                        if mean_score*0.0000001 + random.random() < SKIP_PROB:
-                            num_remaining_blocks = self.num_blocks - 1 - block_idx
-                            num_blocks_to_skip = random.randint(1, num_remaining_blocks)
-                            # we will skip next block
-                            project_reqs.append(req)
-                            # decide how many extra blocks to skip after this current one
-                            req.skip_blocks_remaining = num_blocks_to_skip - 1
-                        else:
-                            # otherwise decide to compute next block as normal
-                            compute_reqs.append(req)   
                     else:
-                        assert False, "This should not happen! All reqs should have scores by now."
+                        compute_reqs.append(req)
 
                 if project_reqs:
                     is_project = True

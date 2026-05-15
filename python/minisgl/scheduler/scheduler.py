@@ -154,11 +154,11 @@ class Scheduler(SchedulerIOMixin):
             
             # the CPU halts here to wait for the background copy to finish (while GPU is unblocked/working on other data)
             copy_done.synchronize() 
+            skip_decisions = self.engine.skipping_db.get_decision_cpu(batch.block_idx, ids_cpu, scores_cpu)
             
             for i, req in enumerate(batch.reqs):
                 # attach the data to the request object
-                req.last_search_scores = scores_cpu[i]
-                req.last_search_ids = ids_cpu[i]
+                req.skip_blocks_remaining = skip_decisions[i]
                 
                 # advance the block counter now that the data is ready
                 req.current_block += 1
@@ -272,6 +272,7 @@ class Scheduler(SchedulerIOMixin):
             self.token_pool[output_mapping] = forward_output.next_tokens_gpu
             for req in batch.reqs:
                 req.current_block = 0
+                req.skip_blocks_remaining = 0 # ensure the skip decision is reset for execution of next token
             self.decode_manager.filter_reqs(batch.reqs)
             
         elif forward_output is None:

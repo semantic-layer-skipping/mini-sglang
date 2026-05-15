@@ -38,10 +38,6 @@ class Req:
     # virtual pipeline fields
     current_block: int = 0
     
-    # slots for async vector search results
-    last_search_scores: torch.Tensor | None = None
-    last_search_ids: torch.Tensor | None = None
-
     # counts number of blocks to skip/project-only
     skip_blocks_remaining: int = 0
 
