@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Iterable, Set, Dict, List
 
+
 from minisgl.core import Batch, Req
 
 SKIP_PROB = 0.3
@@ -20,6 +21,7 @@ class DecodeManager:
     
     # buffer to hold split batches for sequential resubmission
     pending_batches: List[Batch] = field(default_factory=list)
+
 
     def __post_init__(self):
         self.virtual_queues = {i: set() for i in range(self.num_blocks)}
@@ -57,6 +59,7 @@ class DecodeManager:
                     batch.reqs.remove(req)
                     self.pending_batches = [b for b in self.pending_batches if len(b.reqs) > 0]
                     return req
+
         return None
 
     @property
@@ -81,6 +84,7 @@ class DecodeManager:
             return self.pending_batches.pop(0)
         
         # otherwise, perform deepest-ready-first scheduling
+
         for block_idx in reversed(range(self.num_blocks)):
             reqs_in_queue = self.virtual_queues[block_idx]
             if not reqs_in_queue:
@@ -136,3 +140,4 @@ class DecodeManager:
     def runnable(self) -> bool:
         # the manager is runnable if it has queues OR pending split batches
         return len(self.pending_batches) > 0 or any(len(q) > 0 for q in self.virtual_queues.values())
+

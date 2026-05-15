@@ -9,7 +9,7 @@ API_KEY = "EMPTY"
 MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 MAX_TOKENS = 256
-CONCURRENCY = 10      # number of concurrent requests per run (Batch Size)
+CONCURRENCY = 1      # number of concurrent requests per run (Batch Size)
 NUM_WARMUPS = 1      # number of warmup runs
 NUM_RUNS = 3         # number of actual measured runs
 
