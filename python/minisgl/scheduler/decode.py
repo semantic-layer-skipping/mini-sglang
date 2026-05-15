@@ -6,6 +6,7 @@ from typing import Iterable, Set, Dict
 
 from minisgl.core import Batch, Req
 
+SKIP_PROB = 0.3
 
 @dataclass
 class DecodeManager:
@@ -64,8 +65,7 @@ class DecodeManager:
                 # we never skip the first block
                 is_project = False
             else:
-                RANDOM_SKIP_PROB = 0.3
-                is_project = random.random() < RANDOM_SKIP_PROB
+                is_project = random.random() < SKIP_PROB
                 
             # remove them from the queue, as they are now in-flight on the GPU
             for req in batch_reqs:
