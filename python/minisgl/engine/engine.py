@@ -12,7 +12,7 @@ from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import div_even, init_logger, is_sm90_supported, is_sm100_supported, torch_dtype
-from minisgl.engine.skipping_db import SkippingDB
+from minisgl.engine.vector_cache import VectorCache
 
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
@@ -138,7 +138,7 @@ class Engine:
 
         # ======================= SkippingDB initialization ========================
         logger.info_rank0("Initialising GPU SkippingDB...")
-        self.skipping_db = SkippingDB(
+        self.vector_cache = VectorCache(
             num_blocks=self.graph_runner.num_blocks,
             hidden_size=config.model_config.hidden_size,
             device=self.device,
@@ -249,7 +249,7 @@ class Engine:
                 # this was a full-compute intermediate block. 
                 # generate dummy vector search results on the GPU
                 hidden_states = self.global_hidden_states[batch.table_indices]
-                scores_gpu, ids_gpu = self.skipping_db.search_gpu(batch.block_idx, hidden_states)
+                scores_gpu, ids_gpu = self.vector_cache.search_gpu(batch.block_idx, hidden_states)
 
                 # trigger the non-blocking transfer to CPU RAM
                 scores_cpu = scores_gpu.to("cpu", non_blocking=True)

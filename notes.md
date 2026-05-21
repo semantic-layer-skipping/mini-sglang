@@ -7,7 +7,7 @@ This README includes notes about mini-sglang and our fork on it.
 
 1. Create and activate environment.
 ```bash
-uv venv --python=3.12
+uv venv --python=3.10
 source .venv/bin/activate
 
 2. Set up environment:
@@ -32,7 +32,7 @@ This outputs stats such as TTFT, TPOT, Latency and Throughput with mean and conf
 The default setting acts as a simple test, with benchmark settings further controllable in the script arguments in `benchmark/benchmark.py`.
 This includes `--num_tokens` (number of tokens to generate), `--concurrency` (number of requests to send, i.e., batch size), `--num_warmups` and `--num_runs`.
 
-If benchmarking the virtual pipelining implementation, the constants in `python/minisgl/engine/skipping_db.py` file can be changed to view behaviour under different conditions such as hit rate skipping probabilities etc.
+If benchmarking the virtual pipelining implementation, the constants in `python/minisgl/engine/vector_cache.py` file can be changed to view behaviour under different conditions such as hit rate skipping probabilities.
 
 ## Online Serving
 

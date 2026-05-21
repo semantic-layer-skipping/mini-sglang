@@ -7,7 +7,7 @@ logger = init_logger(__name__)
 DEFAULT_K = 5
 HIT_RATE_PROBABILITY = 0.3
 
-class SkippingDB:
+class VectorCache:
 
     def __init__(self, num_blocks: int, hidden_size: int, device: torch.device, dtype: torch.dtype, k: int = 5):        
         self.num_blocks = num_blocks

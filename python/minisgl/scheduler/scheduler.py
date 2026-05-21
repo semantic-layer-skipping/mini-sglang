@@ -154,7 +154,7 @@ class Scheduler(SchedulerIOMixin):
             
             # the CPU halts here to wait for the background copy to finish (while GPU is unblocked/working on other data)
             copy_done.synchronize() 
-            skip_decisions = self.engine.skipping_db.get_decision_cpu(batch.block_idx, ids_cpu, scores_cpu)
+            skip_decisions = self.engine.vector_cache.get_decision_cpu(batch.block_idx, ids_cpu, scores_cpu)
             
             for i, req in enumerate(batch.reqs):
                 # attach the data to the request object
