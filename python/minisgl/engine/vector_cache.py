@@ -12,17 +12,20 @@ logger = init_logger(__name__)
 DEFAULT_K = 5
 HIT_RATE_PROBABILITY = 0.3
 DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
-
+DEFAULT_BACKEND = "ivfpq" # ivfpq, cache
+DEFAULT_METADATA = "distribution" # distribution, ivfpq_store
+DEFAULT_N_PROBE = 64
 
 class VectorCache:
 
-    def __init__(self, num_blocks: int, hidden_size: int, device: torch.device, dtype: torch.dtype, k: int = 5, backend: str = "cache", db_path: str = None):        
+    def __init__(self, num_blocks: int, hidden_size: int, device: torch.device, dtype: torch.dtype, k: int = 5, backend: str = DEFAULT_BACKEND, db_path: str = None, metadata_backend: str = DEFAULT_METADATA):        
         self.num_blocks = num_blocks
         self.hidden_size = hidden_size
         self.device = device
         self.dtype = dtype 
         self.k = k
         self.backend = backend
+        self.metadata_backend = metadata_backend
         
         # simulated size of the cache/index per block
         self.num_centroids = 1000
@@ -34,7 +37,8 @@ class VectorCache:
                 folder_path=db_path,
                 n_checkpoints=num_blocks-1, # we have one index per block except the last one
                 vector_dim=hidden_size,
-                device=str(device).replace("cuda:", "cuda") if "cuda" in str(device) else "cpu"
+                device=str(device).replace("cuda:", "cuda") if "cuda" in str(device) else "cpu",
+                n_probe=DEFAULT_N_PROBE,
             )
             logger.info_rank0(f"Initialised SkippingDB with IVFPQ backend from {db_path}.")
         else:
@@ -95,7 +99,13 @@ class VectorCache:
     def get_decision_cpu(self, block_idx: int, ids_cpu: torch.Tensor, scores_cpu: torch.Tensor) -> list[int]:
         """Runs strictly on the CPU. Maps returned IDs to a final routing decision."""
         batch_size = ids_cpu.shape[0]
-        metadata = self.cpu_metadata[block_idx]
+        
+        # select the correct metadata dictionary based on backend
+        if self.metadata_backend == "ivfpq_store":
+            metadata = self.faiss_db.metadata[block_idx]
+        else:
+            metadata = self.cpu_metadata[block_idx]
+            
         decisions = []
         
         for i in range(batch_size):
@@ -105,12 +115,18 @@ class VectorCache:
             top_score = scores_cpu[i][0].item()
             
             # TODO: in tensor-parallel environment we shouldn't use random scores - different ranks can have different skipping decisions. Regardless, we should use a scoring-based system here finally
-            if top_score*0.0000000001 + random.random() < HIT_RATE_PROBABILITY:
-                top_id = top_id % self.num_centroids # ensure ID is within bounds of metadata (in case IVFPQ returns an ID that's out of range for our simulated metadata)
-                proposed_skips = metadata[top_id]
+            if top_id != -1 and top_score*0.0000000001 + random.random() < HIT_RATE_PROBABILITY:
+                if self.metadata_backend == "ivfpq_store":
+                    # retrieve the actual skip decision from the loaded DB
+                    proposed_skips = metadata[top_id].skip_count
+                else:
+                    # ensure ID is within bounds of simulated metadata
+                    top_id = top_id % self.num_centroids 
+                    proposed_skips = metadata[top_id]
+                    
                 max_allowed_skips = max(0, self.num_blocks - block_idx - 1)
                 decisions.append(min(proposed_skips, max_allowed_skips))
             else:
-                decisions.append(0) # don't skip if confidence is low
+                decisions.append(0) # don't skip if confidence is low or ID is invalid
                 
         return decisions

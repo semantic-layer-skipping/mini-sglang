@@ -258,7 +258,7 @@ class SkippingVectorDB:
         logger.info(f"SkippingVectorDB content saved to {folder_path}")
 
     @classmethod
-    def load(cls, folder_path: str, n_checkpoints: int, vector_dim: int, device: str = "cpu"):
+    def load(cls, folder_path: str, n_checkpoints: int, vector_dim: int, device: str = "cpu", n_probe: int = N_PROBE):
         """Loads indices and metadata from a folder."""
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"No DB found at {folder_path}")
@@ -276,8 +276,7 @@ class SkippingVectorDB:
             cpu_index = faiss.read_index(index_path)
 
             if hasattr(cpu_index, "nprobe"):
-                logger.info(f"Setting nprobe={N_PROBE} for index {i}")
-                cpu_index.nprobe = N_PROBE
+                cpu_index.nprobe = n_probe
 
             # if on gpu, push to vram with optimisations
             if db.device.startswith("cuda") and db.gpu_res is not None:
