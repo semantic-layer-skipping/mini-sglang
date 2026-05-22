@@ -77,6 +77,16 @@ class Engine:
             dtype=self.dtype,
             device=self.device
         )
+
+        # ======================= SkippingDB initialization ========================
+        # note: initialise this before the KV cache, as the KV cache takes up rest of the available memory
+        self.vector_cache = VectorCache(
+            num_blocks=len(self.model.model.blocks) ,
+            hidden_size=config.model_config.hidden_size,
+            device=self.device,
+            dtype=self.dtype,
+            k=5
+        )
         
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
@@ -136,15 +146,6 @@ class Engine:
             dummy_req=self.dummy_req,
         )
 
-        # ======================= SkippingDB initialization ========================
-        logger.info_rank0("Initialising GPU SkippingDB...")
-        self.vector_cache = VectorCache(
-            num_blocks=self.graph_runner.num_blocks,
-            hidden_size=config.model_config.hidden_size,
-            device=self.device,
-            dtype=self.dtype,
-            k=5
-        )
 
     def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
         if config.tp_info.size == 1 or config.use_pynccl:

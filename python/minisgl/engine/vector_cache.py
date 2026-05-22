@@ -1,33 +1,51 @@
 import torch
 import random
+import torch.nn.functional as F
+import faiss.contrib.torch_utils  # enables zero-copy PyTorch tensors in FAISS
+
 from minisgl.utils import init_logger
+# Import the SkippingVectorDB we built previously
+from minisgl.engine.skipping_vector_db import SkippingVectorDB
 
 logger = init_logger(__name__)
 
 DEFAULT_K = 5
 HIT_RATE_PROBABILITY = 0.3
+DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
+
 
 class VectorCache:
 
-    def __init__(self, num_blocks: int, hidden_size: int, device: torch.device, dtype: torch.dtype, k: int = 5):        
+    def __init__(self, num_blocks: int, hidden_size: int, device: torch.device, dtype: torch.dtype, k: int = 5, backend: str = "cache", db_path: str = None):        
         self.num_blocks = num_blocks
         self.hidden_size = hidden_size
         self.device = device
         self.dtype = dtype 
         self.k = k
+        self.backend = backend
         
         # simulated size of the cache/index per block
         self.num_centroids = 1000
 
-        # TODO: can try faiss-gpu ivfpq here too
-        # GPU component: vector index for each block
-        self.gpu_indices = []
-        for _ in range(num_blocks):
-            # random vectors, normalised for cosine similarity
-            centroids = torch.randn(self.num_centroids, hidden_size, device=device, dtype=dtype)
-            centroids = torch.nn.functional.normalize(centroids, p=2, dim=1)
-            self.gpu_indices.append(centroids)
-        logger.info_rank0(f"Initialised SkippingDB with {num_blocks} blocks, each with {self.num_centroids} centroids of dimension {hidden_size} of type {dtype}.")
+        if self.backend == "ivfpq":
+            if db_path is None:
+                db_path = DEFAULT_DB_PATH
+            self.faiss_db = SkippingVectorDB.load(
+                folder_path=db_path,
+                n_checkpoints=num_blocks-1, # we have one index per block except the last one
+                vector_dim=hidden_size,
+                device=str(device).replace("cuda:", "cuda") if "cuda" in str(device) else "cpu"
+            )
+            logger.info_rank0(f"Initialised SkippingDB with IVFPQ backend from {db_path}.")
+        else:
+            # vector cache for each block
+            self.gpu_indices = []
+            for _ in range(num_blocks):
+                # random vectors, normalised for cosine similarity
+                centroids = torch.randn(self.num_centroids, hidden_size, device=device, dtype=dtype)
+                centroids = torch.nn.functional.normalize(centroids, p=2, dim=1)
+                self.gpu_indices.append(centroids)
+            logger.info_rank0(f"Initialised SkippingDB with {num_blocks} blocks, each with {self.num_centroids} centroids of dimension {hidden_size} of type {dtype}.")
 
         # CPU component: metadata store per block
         # maps centroid ID -> number of blocks to skip
@@ -43,16 +61,36 @@ class VectorCache:
 
     def search_gpu(self, block_idx: int, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Runs strictly on the GPU. Returns (scores, ids)."""
-        # normalise queries
-        queries = torch.nn.functional.normalize(hidden_states, p=2, dim=1)
-        index = self.gpu_indices[block_idx]
+        if self.backend == "ivfpq":
+            # cast to fp32 and ensure contiguous (required for FAISS)
+            queries = hidden_states.to(torch.float32).contiguous()
+            # l2 normalise on GPU
+            queries = F.normalize(queries, p=2.0, dim=-1)
+            
+            # zero-copy gpu saerch
+            index = self.faiss_db.indexes[block_idx]
+            actual_k = min(self.k, index.ntotal)
+            
+            # FAISS returns PyTorch tensors (scores, ids) directly in VRAM
+            if actual_k > 0:
+                scores, ids = index.search(queries, actual_k)
+            else:
+                batch_size = hidden_states.shape[0]
+                scores = torch.zeros((batch_size, self.k), dtype=torch.float32, device=self.device)
+                ids = torch.zeros((batch_size, self.k), dtype=torch.int64, device=self.device)
+            return scores, ids
         
-        # inner product search
-        similarities = torch.matmul(queries, index.T) # shape: (batch_size, num_centroids)
-        
-        # get top K
-        scores, ids = torch.topk(similarities, self.k, dim=1)
-        return scores, ids
+        else:
+            # normalise queries
+            queries = torch.nn.functional.normalize(hidden_states, p=2, dim=1)
+            index = self.gpu_indices[block_idx]
+            
+            # inner product search
+            similarities = torch.matmul(queries, index.T) # shape: (batch_size, num_centroids)
+            
+            # get top K
+            scores, ids = torch.topk(similarities, self.k, dim=1)
+            return scores, ids
 
     def get_decision_cpu(self, block_idx: int, ids_cpu: torch.Tensor, scores_cpu: torch.Tensor) -> list[int]:
         """Runs strictly on the CPU. Maps returned IDs to a final routing decision."""
@@ -66,8 +104,9 @@ class VectorCache:
             top_id = int(ids_cpu[i][0].item())
             top_score = scores_cpu[i][0].item()
             
-            # TODO: in tensor-parallel environment we shuoldn't use random scores - different ranks can have different skipping decisions. Regardless, we should use a scoring-based system here finally
+            # TODO: in tensor-parallel environment we shouldn't use random scores - different ranks can have different skipping decisions. Regardless, we should use a scoring-based system here finally
             if top_score*0.0000000001 + random.random() < HIT_RATE_PROBABILITY:
+                top_id = top_id % self.num_centroids # ensure ID is within bounds of metadata (in case IVFPQ returns an ID that's out of range for our simulated metadata)
                 proposed_skips = metadata[top_id]
                 max_allowed_skips = max(0, self.num_blocks - block_idx - 1)
                 decisions.append(min(proposed_skips, max_allowed_skips))
