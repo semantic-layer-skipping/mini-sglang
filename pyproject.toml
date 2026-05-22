@@ -37,6 +37,8 @@ dependencies = [
     "sgl_kernel>=0.3.17.post1",
     "quack-kernels",
     "scipy>=1.15.3",
+    "faiss-gpu>=1.7.2",
+    "faiss-cpu>=1.13.2",
 ]
 
 [project.optional-dependencies]
