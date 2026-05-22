@@ -34,7 +34,9 @@ def _fused_pca_search(queries: torch.Tensor, W: torch.Tensor, C_R: torch.Tensor)
 
 @torch.compile(dynamic=False)
 def _fused_compressed_search(queries: torch.Tensor, C_int: torch.Tensor) -> torch.Tensor:
-    return torch.matmul(queries, C_int.to(queries.dtype).T)
+    # cast to query dtype and reverse the 127.0 scale factor to restore original float values
+    C_float = C_int.to(queries.dtype) / 127.0
+    return torch.matmul(queries, C_float.T)
 
 
 class VectorCache:
@@ -74,7 +76,7 @@ class VectorCache:
                 folder_path=db_path,
                 n_checkpoints=num_blocks-1, # we have one index per block except the last one
                 vector_dim=hidden_size,
-                device=str(device).replace("cuda:", "cuda") if "cuda" in str(device) else "cpu",
+                device=str(device) if "cuda" in str(device) else "cpu",
                 n_probe=DEFAULT_N_PROBE,
             )
             logger.info_rank0(f"Initialised SkippingDB with IVFPQ backend from {db_path}.")
@@ -105,6 +107,9 @@ class VectorCache:
                             cluster_ids = faiss.rev_swig_ptr(invlists.get_ids(i), list_size)
                             # extract all skip counts for this cluster
                             skip_counts = [block_metadata[int(vid)].skip_count for vid in cluster_ids if int(vid) in block_metadata]
+                            if not skip_counts:
+                                id_map[i] = 0
+                                continue
                             # find the most common skip decision (the mode)
                             counts = np.bincount(skip_counts)
                             mode_val = np.argmax(counts)
@@ -144,8 +149,9 @@ class VectorCache:
                     self.cache_matrices.append(reduced)
                 elif self.compression_option == "int8":
                     # proxies W8A16 native compression bandwidth savings
-                    # tensor is stored as 8-bit integers to halve memory bandwidth reads at inference
-                    self.cache_matrices.append(cache_tensor.to(torch.int8))
+                    # scale by 127 to fill int8 range [-127, 127], round to nearest integer, then cast
+                    scaled_tensor = (cache_tensor * 127.0).round().to(torch.int8)
+                    self.cache_matrices.append(scaled_tensor)
                 else: # normal
                     self.cache_matrices.append(cache_tensor)
                     
