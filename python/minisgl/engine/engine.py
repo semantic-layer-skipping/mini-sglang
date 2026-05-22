@@ -12,7 +12,7 @@ from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import div_even, init_logger, is_sm90_supported, is_sm100_supported, torch_dtype
-from minisgl.engine.skipping_db import SkippingDB
+from minisgl.engine.vector_cache import VectorCache
 
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
@@ -77,6 +77,16 @@ class Engine:
             dtype=self.dtype,
             device=self.device
         )
+
+        # ======================= SkippingDB initialization ========================
+        # note: initialise this before the KV cache, as the KV cache takes up rest of the available memory
+        self.vector_cache = VectorCache(
+            num_blocks=len(self.model.model.blocks) ,
+            hidden_size=config.model_config.hidden_size,
+            device=self.device,
+            dtype=self.dtype,
+            k=5
+        )
         
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
@@ -136,15 +146,6 @@ class Engine:
             dummy_req=self.dummy_req,
         )
 
-        # ======================= SkippingDB initialization ========================
-        logger.info_rank0("Initialising GPU SkippingDB...")
-        self.skipping_db = SkippingDB(
-            num_blocks=self.graph_runner.num_blocks,
-            hidden_size=config.model_config.hidden_size,
-            device=self.device,
-            dtype=self.dtype,
-            k=5
-        )
 
     def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
         if config.tp_info.size == 1 or config.use_pynccl:
@@ -249,7 +250,7 @@ class Engine:
                 # this was a full-compute intermediate block. 
                 # generate dummy vector search results on the GPU
                 hidden_states = self.global_hidden_states[batch.table_indices]
-                scores_gpu, ids_gpu = self.skipping_db.search_gpu(batch.block_idx, hidden_states)
+                scores_gpu, ids_gpu = self.vector_cache.search_gpu(batch.block_idx, hidden_states)
 
                 # trigger the non-blocking transfer to CPU RAM
                 scores_cpu = scores_gpu.to("cpu", non_blocking=True)
