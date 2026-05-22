@@ -10,9 +10,16 @@ from minisgl.engine.skipping_vector_db import SkippingVectorDB
 logger = init_logger(__name__)
 
 DEFAULT_K = 5
-HIT_RATE_PROBABILITY = 0.3
-DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
-DEFAULT_BACKEND = "ivfpq" # ivfpq, cache
+HIT_RATE_PROBABILITY = 0.3 
+# 1.5B model
+#DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
+# 3B model
+DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24-28-32/db_ivfpq_subsampled_100pct"
+# 7B model
+#DEFAULT_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260514_024813_Qwen2.5-7B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
+
+
+DEFAULT_BACKEND = "cache" # ivfpq, cache
 DEFAULT_METADATA = "distribution" # distribution, ivfpq_store
 DEFAULT_N_PROBE = 64
 
