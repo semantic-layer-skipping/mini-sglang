@@ -23,7 +23,6 @@ class Action(str, Enum):
     EXIT = "exit"
     SKIP = "skip"
 
-
 @dataclass
 class SkipDecision:
     action: Action
@@ -62,16 +61,30 @@ class SkippingVectorDB:
     def __init__(self, n_checkpoints: int, vector_dim: int, device: str = "cpu"):
         self.n_checkpoints = n_checkpoints
         self.vector_dim = vector_dim
+        self.device = device
+        
+        self.gpu_res = None
+        self.gpu_id = 0
 
-        if device == "cuda":
-            logger.error("FAISS GPU support not yet implemented in this snippet.")
-            pass
+        # initialise GPU resources if requested
+        if self.device.startswith("cuda"):
+            try:
+                self.gpu_res = faiss.StandardGpuResources()
+                # parse specific GPU id if provided (e.g., "cuda:1")
+                if ":" in self.device:
+                    self.gpu_id = int(self.device.split(":")[1])
+                logger.info(f"Initialising FAISS on GPU {self.gpu_id}")
+            except AttributeError:
+                logger.error("faiss-gpu not installed. Falling back to CPU.")
+                self.device = "cpu"
 
         # initialise FAISS Indices
-        # TODO: experiment with index types
-        # TODO: experiment with dimension reduction
-        # TODO: experiment with other similarity metrics (currently cosine via IP)
-        self.indexes = [faiss.IndexFlatIP(vector_dim) for _ in range(n_checkpoints)]
+        self.indexes = []
+        for _ in range(n_checkpoints):
+            idx = faiss.IndexFlatIP(vector_dim)
+            if self.device.startswith("cuda") and self.gpu_res is not None:
+                idx = faiss.index_cpu_to_gpu(self.gpu_res, self.gpu_id, idx)
+            self.indexes.append(idx)
 
         # metadata storage
         # maps (checkpoint, vector_id) -> SkipDecision
@@ -102,10 +115,11 @@ class SkippingVectorDB:
         Optionally stores a dictionary of tag metadata.
         """
         if checkpoint_idx >= self.n_checkpoints:
-            raise ValueError(
-                f"Checkpoint {checkpoint_idx} out of bounds "
-                f"(Max {self.n_checkpoints - 1})"
-            )
+            raise ValueError(f"Checkpoint {checkpoint_idx} out of bounds")
+
+        # for now, we support fp32 only
+        if vector.dtype != np.float32:
+            vector = vector.astype(np.float32)
 
         # normalise vector for cosine similarity
         faiss.normalize_L2(vector)
@@ -133,7 +147,10 @@ class SkippingVectorDB:
         if index.ntotal == 0:
             return []
 
-        # normalise query for cosine similarity
+        # for now, we support fp32 only
+        if query_vector.dtype != np.float32:
+            query_vector = query_vector.astype(np.float32)
+
         faiss.normalize_L2(query_vector)
 
         # cap k to the total number of vectors to prevent faiss errors
@@ -188,7 +205,13 @@ class SkippingVectorDB:
         ):
             # save index
             index_path = os.path.join(folder_path, f"ckpt_{i}.index")
-            faiss.write_index(index, index_path)
+            
+            # FAISS cannot serialise GPU indices, so we pull down to CPU before saving.
+            if self.device.startswith("cuda"):
+                cpu_index = faiss.index_gpu_to_cpu(index)
+                faiss.write_index(cpu_index, index_path)
+            else:
+                faiss.write_index(index, index_path)
 
             # save metadata
             # convert {int: SkipDecision} -> {str: dict} for JSON
@@ -210,27 +233,40 @@ class SkippingVectorDB:
         logger.info(f"SkippingVectorDB content saved to {folder_path}")
 
     @classmethod
-    def load(cls, folder_path: str, n_checkpoints: int, vector_dim: int):
+    def load(cls, folder_path: str, n_checkpoints: int, vector_dim: int, device: str = "cpu"):
         """Loads indices and metadata from a folder."""
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"No DB found at {folder_path}")
 
-        db = cls(n_checkpoints, vector_dim)
+        db = cls(n_checkpoints, vector_dim, device=device)
 
         for i in range(n_checkpoints):
             index_path = os.path.join(folder_path, f"ckpt_{i}.index")
             meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.json")
 
             if not os.path.exists(index_path) or not os.path.exists(meta_path):
-                raise FileNotFoundError(
-                    f"Missing files for checkpoint {i} in {folder_path}"
+                raise FileNotFoundError(f"Missing files for checkpoint {i}")
+
+            # read into cpu index first
+            cpu_index = faiss.read_index(index_path)
+
+            if hasattr(cpu_index, "nprobe"):
+                cpu_index.nprobe = N_PROBE
+
+            # if on gpu, push to vram with optimisations
+            if db.device.startswith("cuda") and db.gpu_res is not None:
+                cloner_options = faiss.GpuClonerOptions()
+                cloner_options.useFloat16 = True
+                
+                # if the index is IVFPQ, and not using inner product, enable precomputed tables for faster searching
+                if isinstance(cpu_index, faiss.IndexIVF) and cpu_index.metric_type != faiss.METRIC_INNER_PRODUCT:
+                    cloner_options.usePrecomputed = True
+
+                db.indexes[i] = faiss.index_cpu_to_gpu(
+                    db.gpu_res, db.gpu_id, cpu_index, cloner_options
                 )
-
-            db.indexes[i] = faiss.read_index(index_path)
-
-            if hasattr(db.indexes[i], "nprobe"):
-                logger.info(f"Setting nprobe={N_PROBE} for index {i}")
-                db.indexes[i].nprobe = N_PROBE
+            else:
+                db.indexes[i] = cpu_index
 
             with open(meta_path) as f:
                 raw_data = json.load(f)
@@ -248,7 +284,7 @@ class SkippingVectorDB:
                     raw_tag_data = json.load(f)
                 db.tag_metadata[i] = {int(k): v for k, v in raw_tag_data.items()}
 
-        logger.info(f"SkippingVectorDB loaded from {folder_path}")
+        logger.info(f"SkippingVectorDB loaded from {folder_path} on {device.upper()}")
         return db
 
     @staticmethod
@@ -471,11 +507,12 @@ def verify_and_set_faiss_threads():
 
 # example usage:
 if __name__ == "__main__":
-
+    # load on cuda
     loaded_db = SkippingVectorDB.load(
-        STORE_DIR, n_checkpoints=6, vector_dim=1536
+        STORE_DIR, n_checkpoints=6, vector_dim=1536, device="cuda"
     )
 
     vec = np.random.rand(1, 1536).astype("float32")
+
     loaded_result = loaded_db.search(checkpoint_idx=0, query_vector=vec)
     logger.info(f"Found decision: {loaded_result}")

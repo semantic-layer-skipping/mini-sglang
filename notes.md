@@ -14,6 +14,7 @@ source .venv/bin/activate
 ```python
 uv pip install -e .
 ```
+(Note: faiss-cpu and faiss-gpu can't be installed at the same time. Make sure to uninstall any faiss libraries, and install the preferred one, including the cu version for faiss-gpu).
 
 
 ## Running Benchmark with Online Server
