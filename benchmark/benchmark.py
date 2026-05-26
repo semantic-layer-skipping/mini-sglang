@@ -137,6 +137,7 @@ async def main(args: argparse.Namespace):
     print(f"TTFT (Prefill) : {mean_ttft:.2f} ms ± {ci_ttft:.2f} ms")
     print(f"TPOT (Decode)  : {mean_tpot:.2f} ms ± {ci_tpot:.2f} ms")
     print(f"Latency (E2E)  : {mean_latency:.2f} ms ± {ci_latency:.2f} ms")
+    print(f"All latencies: {all_latencies}")
     print(f"Throughput/Req : {mean_throughput:.2f} tk/s ± {ci_throughput:.2f} tk/s")
     
     # system throughput 

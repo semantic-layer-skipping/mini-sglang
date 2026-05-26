@@ -11,7 +11,7 @@ from minisgl.engine.skipping_vector_db import SkippingVectorDB
 logger = init_logger(__name__)
 
 DEFAULT_K = 5
-HIT_RATE_PROBABILITY = 0.3 
+HIT_RATE_PROBABILITY = 0.3
 # 1.5B model
 DEFAULT_1_5B_MODEL_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
 # 3B model
@@ -19,11 +19,11 @@ DEFAULT_3B_MODEL_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments
 # 7B model
 DEFAULT_7B_MODEL_DB_PATH = "/home/yff23/data/semantic-layer-skipping/experiments/batch_20260514_024813_Qwen2.5-7B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/db_ivfpq_subsampled_100pct"
 
-DEFAULT_BACKEND = "cache" # ivfpq, sim, ivfpq_centroids, hot_cache
-DEFAULT_METADATA = "distribution" # distribution, ivfpq_store
-DEFAULT_COMPRESSION = "normal" # normal, int8, pca
-DEFAULT_NUM_CACHE_VECTORS = 1000
-DEFAULT_N_PROBE = 64
+DEFAULT_BACKEND = "ivfpq_centroids" # ivfpq, sim, ivfpq_centroids, hot_cache
+DEFAULT_METADATA = "ivfpq_store" # ivfpq_store, distribution
+DEFAULT_COMPRESSION = "pca" # normal, int8, pca
+DEFAULT_NUM_CACHE_VECTORS = 4096
+DEFAULT_N_PROBE = 128
 
 
 # torch.compile generates fused kernels avoiding intermediate VRAM writes
@@ -58,7 +58,7 @@ class VectorCache:
         if db_path is None:
             if hidden_size == 1536:
                 db_path = DEFAULT_1_5B_MODEL_DB_PATH
-            elif hidden_size == 3072:
+            elif hidden_size == 2048.:
                 db_path = DEFAULT_3B_MODEL_DB_PATH
             elif hidden_size == 3584:
                 db_path = DEFAULT_7B_MODEL_DB_PATH
