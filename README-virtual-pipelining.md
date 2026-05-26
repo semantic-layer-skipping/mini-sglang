@@ -1,9 +1,9 @@
 # mini-sglang-virtual-pipelining
 
-This README includes notes about mini-sglang and our fork on it.
+This README includes details and instructions about our virtual pipelining fork on mini-sglang.
+For the original README, and more details about mini-sglang see `README.md`.
 
 ## Setup
-
 
 1. Create and activate environment.
 ```bash
@@ -100,6 +100,4 @@ Sample output: Total: 133966tok, Time: 73.15s, Throughput: 1831.38tok/s
 ## Notes
 
 - Tensor Parallelism: Scales inference across multiple GPUs.
-
-
 - Overlap Scheduling: To further reduce CPU overhead, Mini-SGLang employs overlap scheduling, a technique proposed in NanoFlow. This approach overlaps the CPU scheduling overhead with GPU computation, improving overall system throughput.
